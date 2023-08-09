@@ -50,7 +50,16 @@ static Header getHeader(const char *name)
     return result;
 }
 
-static void readHeaders()
+static const char *const g_formulaPrefix = R"text(#ifndef FORMULA_H
+#define FORMULA_H
+
+#define FORMULA )text";
+static const char *const g_formulaSuffix = R"text(
+
+#endif
+)text";
+
+static void readHeaders( const char *formula )
 {
     if (!g_headers.empty())
         return;
@@ -59,6 +68,10 @@ static void readHeaders()
     {
         g_headers.emplace_back(getHeader(header));
     }
+    Header formulaHeader;
+    formulaHeader.name = "Formula.cuh";
+    formulaHeader.contents = std::string{g_formulaPrefix} + formula + g_formulaSuffix;
+    g_headers.emplace_back(std::move(formulaHeader));
     std::transform(g_headers.begin(), g_headers.end(), std::back_inserter(g_headerContentsPtrs),
                    [](const Header &header) { return header.contents.c_str(); });
     std::transform(g_headers.begin(), g_headers.end(), std::back_inserter(g_headerNamePtrs),
@@ -90,7 +103,7 @@ void createPrograms()
 
 void render(int width, int height, uchar4 *pixels, const char *const formula)
 {
-    readHeaders();
+    readHeaders(formula);
     createPrograms();
 
     const unsigned int totalThreads = width * height;

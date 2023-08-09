@@ -1,5 +1,6 @@
 #include "Iterate.cuh"
 #include "Complex.cuh"
+#include "Formula.cuh"
 
 namespace fractal
 {
@@ -15,7 +16,7 @@ extern "C" __device__ int iterate( float cx, float cy, int maxIters )
     {
         if (magSquared(z) > bailOut)
             break;
-        z = z*z + c;
+        z = FORMULA;
     }
 
     return n;

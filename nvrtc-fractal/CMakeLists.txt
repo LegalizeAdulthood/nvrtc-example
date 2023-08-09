@@ -9,6 +9,7 @@ add_executable(nvrtc-fractal
     main.cpp
     stubs.cpp
     Complex.cuh
+    Formula.cuh
     Fractal.h
     Fractal.cu
     Iterate.cuh
@@ -30,5 +31,5 @@ add_executable(nvrtc-fractal-dynamic
     nvrtcErrorCheck.h
 )
 target_include_directories(nvrtc-fractal-dynamic PUBLIC .)
-target_link_libraries(nvrtc-fractal-dynamic PUBLIC OptiXToolkit::Error OptiXToolkit::Gui CUDA::nvrtc)
+target_link_libraries(nvrtc-fractal-dynamic PUBLIC OptiXToolkit::Error OptiXToolkit::Gui CUDA::nvrtc CUDA::nvJitLink)
 copy_dependencies(nvrtc-fractal-dynamic)
