@@ -3,7 +3,6 @@
 #include <vector_functions.h>
 
 #include <math.h>
-#include <stdio.h>
 
 namespace fractal
 {
@@ -15,52 +14,60 @@ struct Params
     float ymin;
     float ymax;
     int maxIters;
-    int numColors;
-    uchar4 *colors;
+    uchar4 colors[256];
 };
 
 struct Complex
 {
-    float2 val;
+    float re;
+    float im;
+
+    __device__ __forceinline__ Complex &operator=(const Complex &rhs)
+    {
+        re = rhs.re;
+        im = rhs.im;
+        return *this;
+    }
 };
 
 __device__ __forceinline__ Complex operator+(const Complex &lhs, const Complex &rhs)
 {
-    return {make_float2(lhs.val.x + rhs.val.x, lhs.val.y + rhs.val.y)};
+    return {lhs.re + rhs.re, lhs.im + rhs.im};
 }
 
 __device__ __forceinline__ Complex operator-(const Complex &lhs, const Complex &rhs)
 {
-    return {make_float2(lhs.val.x - rhs.val.x, lhs.val.y - rhs.val.y)};
+    return {lhs.re - rhs.re, lhs.im - rhs.im};
 }
 
 __device__ __forceinline__ Complex operator*(const Complex &lhs, const Complex &rhs)
 {
-    return {make_float2(lhs.val.x * rhs.val.x - lhs.val.y * rhs.val.y, lhs.val.x * rhs.val.y + lhs.val.y * rhs.val.x)};
+    return {lhs.re * rhs.re - lhs.im * rhs.im, lhs.re * rhs.im + lhs.im * rhs.re};
 }
 
 __device__ __forceinline__ float magSquared(const Complex &arg)
 {
-    return arg.val.x*arg.val.x + arg.val.y*arg.val.y;
+    return arg.re*arg.re + arg.im*arg.im;
 }
 
-__host__ __device__ __forceinline__ int mandelbrotColor( float cx, float cy, const Params& params )
+__device__ __forceinline__ int iterate( float cx, float cy, int maxIters )
 {
-    float2      z{cx, cy};
+    Complex     z{cx, cy};
+    Complex     c{cx, cy};
     int         n = 0;
     const float bailOut = 4.0f;
 
-    for (n = 0; n < params.maxIters; ++n)
+    for (n = 0; n < maxIters; ++n)
     {
-        if (z.x * z.x + z.y * z.y > bailOut)
+        if (magSquared(z) > bailOut)
             break;
-        z = {(cx + z.x * z.x - z.y * z.y), (cy + z.x * z.y + z.y * z.x)};
+        z = z*z + c;
     }
 
     return n;
 }
 
-__global__ static void iterate(int width, int height, uchar4 *pixels, const Params params)
+extern "C" __global__ static void colorPixel(int width, int height, uchar4 *pixels, const Params params)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -70,12 +77,12 @@ __global__ static void iterate(int width, int height, uchar4 *pixels, const Para
     int j = idx / width;
     int i = idx - (j * width);
 
-    float dx = (static_cast<float>(i) + 0.5f) / width;
-    float x = params.xmin * (1.0f - dx) + params.xmax * dx;
+    float dr = (static_cast<float>(i) + 0.5f) / width;
+    float re = params.xmin * (1.0f - dr) + params.xmax * dr;
 
-    float dy = (static_cast<float>(j) + 0.5f) / height;
-    float y = params.ymin * (1.0f - dy) + params.ymax * dy;
-    const int iters = mandelbrotColor(x, y, params) % params.numColors;
+    float di = (static_cast<float>(j) + 0.5f) / height;
+    float im = params.ymin * (1.0f - di) + params.ymax * di;
+    const int iters = iterate(re, im, params.maxIters) % 256;
     pixels[idx] = params.colors[iters];
 }
 
@@ -88,20 +95,13 @@ __host__ void render(int width, int height, uchar4 *pixels)
     dim3 grid(numBLocks, 1, 1);
     dim3 block(threadsPerBlock, 1, 1);
 
-    static uchar4 *devColors{};
-    if (devColors == nullptr)
+    Params params{-2.0f, 1.f, -1.5f, 1.5f, 8192};
+    for (int i = 0; i < 256; ++i)
     {
-        cudaMalloc(reinterpret_cast<void **>(&devColors), 256 * sizeof(uchar4));
-        uchar4 colors[256];
-        for (int i = 0; i < 256; ++i)
-        {
-            colors[i] = make_uchar4(static_cast<unsigned char>(i), static_cast<unsigned char>(255 - i),
-                                    static_cast<unsigned char>(i), 255U);
-        }
-        cudaMemcpy(devColors, colors, 256 * sizeof(uchar4), cudaMemcpyHostToDevice);
+        params.colors[i] = make_uchar4(static_cast<unsigned char>(i), static_cast<unsigned char>(255 - i),
+                                       static_cast<unsigned char>(i), 255U);
     }
-    Params params{-1.5f, 1.5f, -1.5f, 1.5f, 8192, 256, devColors};
-    iterate<<<grid, block, 0U>>>(width, height, pixels, params);
+    colorPixel<<<grid, block, 0U>>>(width, height, pixels, params);
 }
 
 } // namespace fractal
