@@ -1,0 +1,8 @@
+#include "SourceDir.h"
+
+namespace fractal
+{
+
+const char *const g_sourceDir{"@CMAKE_CURRENT_SOURCE_DIR@"};
+
+}

@@ -6,15 +6,14 @@
 
 #include <cuda.h>
 
-#include "Fractal.h"
-#include "Params.h"
+#include "Dynamic.h"
 
 #include <stdexcept>
 
 namespace
 {
 
-int render(char *program)
+int render(const char *program, const char *formula)
 {
     OTK_ERROR_CHECK(cudaFree(nullptr));
 
@@ -23,7 +22,7 @@ int render(char *program)
     otk::CUDAOutputBuffer<uchar4> output(otk::CUDAOutputBufferType::CUDA_DEVICE, width, height);
 
     uchar4 *pixels = output.map();
-    fractal::render(width, height, pixels);
+    fractal::render(width, height, pixels, formula);
     output.unmap();
 
     otk::ImageBuffer buffer;
@@ -42,7 +41,9 @@ int main(int argc, char *argv[])
 {
     try
     {
-        return render(argv[0]);
+        if (argc != 2)
+            throw std::runtime_error("missing argument");
+        return render(argv[0], argv[1]);
     }
     catch (const std::exception &bang)
     {

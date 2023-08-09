@@ -1,6 +1,7 @@
 #include "Fractal.h"
 #include "Complex.cuh"
 #include "Iterate.cuh"
+#include "Params.h"
 
 #include <vector_functions.h>
 
@@ -8,16 +9,6 @@
 
 namespace fractal
 {
-
-struct Params
-{
-    float xmin;
-    float xmax;
-    float ymin;
-    float ymax;
-    int maxIters;
-    uchar4 colors[6];
-};
 
 __global__ static void colorPixel(int width, int height, uchar4 *pixels, const Params params)
 {
