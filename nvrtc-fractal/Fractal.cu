@@ -5,12 +5,14 @@
 
 #include <vector_functions.h>
 
-#include <math.h>
+#ifndef USE_LAUNCHER
+#define USE_LAUNCHER 1
+#endif
 
 namespace fractal
 {
 
-__global__ static void colorPixel(int width, int height, uchar4 *pixels, const Params params)
+extern "C" __global__ void colorPixel(int width, int height, uchar4 *pixels, const Params params)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -32,6 +34,7 @@ __global__ static void colorPixel(int width, int height, uchar4 *pixels, const P
         pixels[idx] = params.colors[iters % 6];
 }
 
+#if USE_LAUNCHER
 __host__ void render(int width, int height, uchar4 *pixels)
 {
     const unsigned int totalThreads = width * height;
@@ -56,5 +59,6 @@ __host__ void render(int width, int height, uchar4 *pixels)
     }
     colorPixel<<<grid, block, 0U>>>(width, height, pixels, params);
 }
+#endif
 
 } // namespace fractal

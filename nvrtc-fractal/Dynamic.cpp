@@ -3,12 +3,15 @@
 #include "SourceDir.h"
 #include "nvrtcErrorCheck.h"
 
+#include <OptiXToolkit/Error/cuErrorCheck.h>
+
 #include <cuda.h>
 #include <nvrtc.h>
 #include <vector_functions.h>
 
 #include <algorithm>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <sstream>
 #include <string>
@@ -72,6 +75,9 @@ static void readHeaders(const char *formula)
     formulaHeader.name = "Formula.cuh";
     formulaHeader.contents = std::string{g_formulaPrefix} + formula + g_formulaSuffix;
     g_headers.emplace_back(std::move(formulaHeader));
+    g_headers.emplace_back(Header{"vector_types.h", ""});
+    g_headers.emplace_back(Header{"vector_functions.h", ""});
+    g_headers.emplace_back(Header{"Fractal.h", ""});
     std::transform(g_headers.begin(), g_headers.end(), std::back_inserter(g_headerContentsPtrs),
                    [](const Header &header) { return header.contents.c_str(); });
     std::transform(g_headers.begin(), g_headers.end(), std::back_inserter(g_headerNamePtrs),
@@ -79,13 +85,24 @@ static void readHeaders(const char *formula)
 }
 
 static std::vector<std::string> g_programs;
+static std::vector<CUmodule> g_modules;
 
-void createProgram(const char *file)
+void createProgramFromText(const char *text, const char *file)
 {
-    std::string  text(fileContents(sourcePath(file).c_str()));
     nvrtcProgram program{};
-    OTK_ERROR_CHECK(nvrtcCreateProgram(&program, text.c_str(), file, g_headerContentsPtrs.size(),
+    OTK_ERROR_CHECK(nvrtcCreateProgram(&program, text, file, g_headerContentsPtrs.size(),
                                        g_headerContentsPtrs.data(), g_headerNamePtrs.data()));
+    const char *options[] = {"-dc", "-DUSE_LAUNCHER=0"};
+    if (const nvrtcResult status = nvrtcCompileProgram(program, sizeof(options) / sizeof(options[0]), options))
+    {
+        std::string log;
+        size_t      logSize{};
+        OTK_ERROR_CHECK(nvrtcGetProgramLogSize(program, &logSize));
+        log.resize(logSize);
+        OTK_ERROR_CHECK(nvrtcGetProgramLog(program, &log[0]));
+        std::cout << log << '\n';
+        OTK_ERROR_CHECK(status);
+    }
     std::string ptx;
     size_t      size{};
     OTK_ERROR_CHECK(nvrtcGetPTXSize(program, &size));
@@ -95,22 +112,24 @@ void createProgram(const char *file)
     g_programs.emplace_back(std::move(ptx));
 }
 
-void compileProgram(nvrtcProgram program)
+void createProgram(const char *file)
 {
-    const char *options[] = {"-rdc"};
-    OTK_ERROR_CHECK(nvrtcCompileProgram(program, sizeof(options) / sizeof(options[0]), options));
-}
-
-void createPrograms()
-{
-    createProgram("Iterate.cu");
-    createProgram("Fractal.cu");
+    return createProgramFromText(fileContents(sourcePath(file).c_str()).c_str(), file);
 }
 
 void render(int width, int height, uchar4 *pixels, const char *const formula)
 {
     readHeaders(formula);
-    createPrograms();
+    createProgram("Iterate.cu");
+    createProgram("Fractal.cu");
+    
+    OTK_ERROR_CHECK(cuInit(0));
+    CUdevice device{};
+    OTK_ERROR_CHECK(cuDeviceGet(&device, 0));
+    CUcontext context{};
+    OTK_ERROR_CHECK(cuCtxCreate(&context, 0, device));
+    CUmodule module{};
+    OTK_ERROR_CHECK(cuModuleLoadDataEx(&module, g_programs[0].c_str(), 0, nullptr, nullptr));
 
     const unsigned int totalThreads = width * height;
     const unsigned int threadsPerBlock = 64;

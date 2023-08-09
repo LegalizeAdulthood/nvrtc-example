@@ -2,10 +2,12 @@
 #include "Complex.cuh"
 #include "Formula.cuh"
 
+#include <vector_functions.h>
+
 namespace fractal
 {
 
-extern "C" __device__ int iterate( float cx, float cy, int maxIters )
+__device__ int iterate( float cx, float cy, int maxIters )
 {
     Complex     z{cx, cy};
     Complex     c{cx, cy};
