@@ -136,6 +136,8 @@ void createSingleProgram()
     std::string text{fileContents(sourcePath("Iterate.cu").c_str()) + fileContents(sourcePath("Fractal.cu").c_str())};
     return createProgramFromText(text.c_str(), "Dynamic.cu");
 }
+
+// Set this to 1 to use separate JIT compilation and linking.
 #define USE_NVJITLINK 0
 
 #if USE_NVJITLINK
@@ -209,12 +211,8 @@ void render(int width, int height, uchar4 *pixels, const char *const formula)
         params.colors[i] = colors[i];
     }
 
-    CUdeviceptr devParams;
-    OTK_ERROR_CHECK(cuMemAlloc(&devParams, sizeof(Params)));
-    OTK_ERROR_CHECK(cuMemcpyHtoD(devParams, &params, sizeof(Params)));
-
     // call function
-    void *args[] = {&width, &height, &pixels, &devParams};
+    void *args[] = {&width, &height, &pixels, &params};
     OTK_ERROR_CHECK(cuLaunchKernel(entryPoint, numBlocks, 1, 1, threadsPerBlock, 1, 1, 0, nullptr, args, nullptr));
 }
 
