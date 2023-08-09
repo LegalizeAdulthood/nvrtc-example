@@ -1,6 +1,7 @@
 add_executable(nvrtc-fractal
     main.cpp
     stubs.cpp
+    Complex.cuh
     Fractal.h
     Fractal.cu
 )
