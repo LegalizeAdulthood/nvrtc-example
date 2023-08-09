@@ -59,7 +59,7 @@ static const char *const g_formulaSuffix = R"text(
 #endif
 )text";
 
-static void readHeaders( const char *formula )
+static void readHeaders(const char *formula)
 {
     if (!g_headers.empty())
         return;
@@ -78,27 +78,33 @@ static void readHeaders( const char *formula )
                    [](const Header &header) { return header.name.c_str(); });
 }
 
-nvrtcProgram createProgram(const char *file)
+static std::vector<std::string> g_programs;
+
+void createProgram(const char *file)
 {
     std::string  text(fileContents(sourcePath(file).c_str()));
     nvrtcProgram program{};
     OTK_ERROR_CHECK(nvrtcCreateProgram(&program, text.c_str(), file, g_headerContentsPtrs.size(),
                                        g_headerContentsPtrs.data(), g_headerNamePtrs.data()));
-    return program;
+    std::string ptx;
+    size_t      size{};
+    OTK_ERROR_CHECK(nvrtcGetPTXSize(program, &size));
+    ptx.resize(size);
+    OTK_ERROR_CHECK(nvrtcGetPTX(program, &ptx[0]));
+    OTK_ERROR_CHECK(nvrtcDestroyProgram(&program));
+    g_programs.emplace_back(std::move(ptx));
 }
 
 void compileProgram(nvrtcProgram program)
 {
-    const char *options[] = {"-rdc", "-I", g_sourceDir};
+    const char *options[] = {"-rdc"};
     OTK_ERROR_CHECK(nvrtcCompileProgram(program, sizeof(options) / sizeof(options[0]), options));
 }
 
 void createPrograms()
 {
-    nvrtcProgram iterate = createProgram("Iterate.cu");
-    nvrtcProgram fractal = createProgram("Fractal.cu");
-    OTK_ERROR_CHECK(nvrtcDestroyProgram(&fractal));
-    OTK_ERROR_CHECK(nvrtcDestroyProgram(&iterate));
+    createProgram("Iterate.cu");
+    createProgram("Fractal.cu");
 }
 
 void render(int width, int height, uchar4 *pixels, const char *const formula)
