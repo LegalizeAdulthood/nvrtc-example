@@ -1,5 +1,6 @@
 #include "Fractal.h"
 #include "Complex.cuh"
+#include "Iterate.cuh"
 
 #include <vector_functions.h>
 
@@ -18,24 +19,7 @@ struct Params
     uchar4 colors[6];
 };
 
-__device__ __forceinline__ int iterate( float cx, float cy, int maxIters )
-{
-    Complex     z{cx, cy};
-    Complex     c{cx, cy};
-    int         n = 0;
-    const float bailOut = 4.0f;
-
-    for (n = 0; n < maxIters; ++n)
-    {
-        if (magSquared(z) > bailOut)
-            break;
-        z = z*z + c;
-    }
-
-    return n;
-}
-
-extern "C" __global__ static void colorPixel(int width, int height, uchar4 *pixels, const Params params)
+__global__ static void colorPixel(int width, int height, uchar4 *pixels, const Params params)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 

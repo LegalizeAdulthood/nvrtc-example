@@ -4,7 +4,10 @@ add_executable(nvrtc-fractal
     Complex.cuh
     Fractal.h
     Fractal.cu
+    Iterate.cuh
+    Iterate.cu
 )
+set_target_properties(nvrtc-fractal PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(nvrtc-fractal PUBLIC OptiXToolkit::Gui CUDA::nvrtc)
 
 # Copy shared libraries that the built executable depends on.
