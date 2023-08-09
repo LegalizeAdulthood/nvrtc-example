@@ -1,8 +1,8 @@
 #include "Dynamic.h"
 #include "Params.h"
 #include "SourceDir.h"
-#include "nvrtcErrorCheck.h"
 #include "nvJitLinkErrorCheck.h"
+#include "nvrtcErrorCheck.h"
 
 #include <OptiXToolkit/Error/cuErrorCheck.h>
 
@@ -19,6 +19,9 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+// Set this to 1 to use separate JIT compilation and linking.
+#define USE_NVJITLINK 1
 
 namespace fractal
 {
@@ -87,7 +90,7 @@ static void readHeaders(const char *formula)
                    [](const Header &header) { return header.name.c_str(); });
 }
 
-static std::vector<std::string> g_ptx;
+static std::vector<std::string> g_compileOutput;
 
 std::string getArchOption()
 {
@@ -97,16 +100,23 @@ std::string getArchOption()
     OTK_ERROR_CHECK(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
     int minor{};
     OTK_ERROR_CHECK(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
-    return "-arch=sm_" + std::to_string(major*10 + minor);
+    return "-arch=sm_" + std::to_string(major * 10 + minor);
 }
 
 void createProgramFromText(const char *text, const char *file)
 {
     nvrtcProgram program{};
-    OTK_ERROR_CHECK(nvrtcCreateProgram(&program, text, file, g_headerContentsPtrs.size(),
-                                       g_headerContentsPtrs.data(), g_headerNamePtrs.data()));
+    OTK_ERROR_CHECK(nvrtcCreateProgram(&program, text, file, g_headerContentsPtrs.size(), g_headerContentsPtrs.data(),
+                                       g_headerNamePtrs.data()));
     std::string archOption{getArchOption()};
-    const char *options[] = {"-dc", "-DUSE_LAUNCHER=0", archOption.c_str()};
+    const char *options[] = {
+#if USE_NVJITLINK
+        "-dlto",
+#endif
+        "-dc",
+        "-DUSE_LAUNCHER=0",
+        archOption.c_str()
+    };
     if (const nvrtcResult status = nvrtcCompileProgram(program, sizeof(options) / sizeof(options[0]), options))
     {
         std::string log;
@@ -117,13 +127,21 @@ void createProgramFromText(const char *text, const char *file)
         std::cout << log << '\n';
         OTK_ERROR_CHECK(status);
     }
-    std::string ptx;
+#if USE_NVJITLINK
+    std::string output;
+    size_t      size{};
+    OTK_ERROR_CHECK(nvrtcGetLTOIRSize(program, &size));
+    output.resize(size);
+    OTK_ERROR_CHECK(nvrtcGetLTOIR(program, &output[0]));
+#else
+    std::string output;
     size_t      size{};
     OTK_ERROR_CHECK(nvrtcGetPTXSize(program, &size));
-    ptx.resize(size);
-    OTK_ERROR_CHECK(nvrtcGetPTX(program, &ptx[0]));
+    output.resize(size);
+    OTK_ERROR_CHECK(nvrtcGetPTX(program, &output[0]));
+#endif
     OTK_ERROR_CHECK(nvrtcDestroyProgram(&program));
-    g_ptx.emplace_back(std::move(ptx));
+    g_compileOutput.emplace_back(std::move(output));
 }
 
 void createProgram(const char *file)
@@ -137,29 +155,26 @@ void createSingleProgram()
     return createProgramFromText(text.c_str(), "Dynamic.cu");
 }
 
-// Set this to 1 to use separate JIT compilation and linking.
-#define USE_NVJITLINK 0
-
 #if USE_NVJITLINK
 static CUfunction getEntryPoint()
 {
     std::string     arch{getArchOption()};
-    const char     *options[] = {arch.c_str()};
+    const char     *options[] = {"-lto", "-ptx", arch.c_str()};
     nvJitLinkHandle handle{};
     OTK_ERROR_CHECK(nvJitLinkCreate(&handle, sizeof(options) / sizeof(options[0]), options));
-    for (const std::string &ptx : g_ptx)
+    for (const std::string &output : g_compileOutput)
     {
-        OTK_ERROR_CHECK(nvJitLinkAddData(handle, NVJITLINK_INPUT_PTX, ptx.c_str(), ptx.size(), ""));
+        OTK_ERROR_CHECK(nvJitLinkAddData(handle, NVJITLINK_INPUT_LTOIR, output.c_str(), output.size(), ""));
     }
     OTK_ERROR_CHECK(nvJitLinkComplete(handle));
-    size_t cubinSize{};
-    OTK_ERROR_CHECK(nvJitLinkGetLinkedCubinSize(handle, &cubinSize));
-    std::vector<std::uint8_t> cubin;
-    cubin.resize(cubinSize);
-    OTK_ERROR_CHECK(nvJitLinkGetLinkedCubin(handle, cubin.data()));
+    size_t outputSize{};
+    OTK_ERROR_CHECK(nvJitLinkGetLinkedPtxSize(handle, &outputSize));
+    std::string output;
+    output.resize(outputSize);
+    OTK_ERROR_CHECK(nvJitLinkGetLinkedPtx(handle, &output[0]));
     size_t logSize{};
     OTK_ERROR_CHECK(nvJitLinkGetErrorLogSize(handle, &logSize));
-    if(logSize > 1)
+    if (logSize > 1)
     {
         std::string log;
         log.resize(logSize);
@@ -169,7 +184,7 @@ static CUfunction getEntryPoint()
     OTK_ERROR_CHECK(nvJitLinkDestroy(&handle));
 
     CUmodule module{};
-    OTK_ERROR_CHECK(cuModuleLoadData(&module, cubin.data()));
+    OTK_ERROR_CHECK(cuModuleLoadData(&module, output.data()));
     CUfunction entryPoint{};
     OTK_ERROR_CHECK(cuModuleGetFunction(&entryPoint, module, "colorPixel"));
     return entryPoint;
@@ -179,7 +194,7 @@ CUmodule g_module{};
 
 CUfunction getEntryPoint()
 {
-    OTK_ERROR_CHECK(cuModuleLoadData(&g_module, g_ptx[0].c_str()));
+    OTK_ERROR_CHECK(cuModuleLoadData(&g_module, g_compileOutput[0].c_str()));
     CUfunction entryPoint{};
     OTK_ERROR_CHECK(cuModuleGetFunction(&entryPoint, g_module, "colorPixel"));
     return entryPoint;
