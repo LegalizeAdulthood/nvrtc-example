@@ -2,14 +2,17 @@
 #include "Params.h"
 #include "SourceDir.h"
 #include "nvrtcErrorCheck.h"
+#include "nvJitLinkErrorCheck.h"
 
 #include <OptiXToolkit/Error/cuErrorCheck.h>
 
 #include <cuda.h>
+#include <nvJitLink.h>
 #include <nvrtc.h>
 #include <vector_functions.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -84,15 +87,26 @@ static void readHeaders(const char *formula)
                    [](const Header &header) { return header.name.c_str(); });
 }
 
-static std::vector<std::string> g_programs;
-static std::vector<CUmodule> g_modules;
+static std::vector<std::string> g_ptx;
+
+std::string getArchOption()
+{
+    CUdevice device{};
+    OTK_ERROR_CHECK(cuDeviceGet(&device, 0));
+    int major{};
+    OTK_ERROR_CHECK(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
+    int minor{};
+    OTK_ERROR_CHECK(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
+    return "-arch=sm_" + std::to_string(major*10 + minor);
+}
 
 void createProgramFromText(const char *text, const char *file)
 {
     nvrtcProgram program{};
     OTK_ERROR_CHECK(nvrtcCreateProgram(&program, text, file, g_headerContentsPtrs.size(),
                                        g_headerContentsPtrs.data(), g_headerNamePtrs.data()));
-    const char *options[] = {"-dc", "-DUSE_LAUNCHER=0"};
+    std::string archOption{getArchOption()};
+    const char *options[] = {"-dc", "-DUSE_LAUNCHER=0", archOption.c_str()};
     if (const nvrtcResult status = nvrtcCompileProgram(program, sizeof(options) / sizeof(options[0]), options))
     {
         std::string log;
@@ -109,7 +123,7 @@ void createProgramFromText(const char *text, const char *file)
     ptx.resize(size);
     OTK_ERROR_CHECK(nvrtcGetPTX(program, &ptx[0]));
     OTK_ERROR_CHECK(nvrtcDestroyProgram(&program));
-    g_programs.emplace_back(std::move(ptx));
+    g_ptx.emplace_back(std::move(ptx));
 }
 
 void createProgram(const char *file)
@@ -117,26 +131,73 @@ void createProgram(const char *file)
     return createProgramFromText(fileContents(sourcePath(file).c_str()).c_str(), file);
 }
 
+void createSingleProgram()
+{
+    std::string text{fileContents(sourcePath("Iterate.cu").c_str()) + fileContents(sourcePath("Fractal.cu").c_str())};
+    return createProgramFromText(text.c_str(), "Dynamic.cu");
+}
+#define USE_NVJITLINK 0
+
+#if USE_NVJITLINK
+static CUfunction getEntryPoint()
+{
+    std::string     arch{getArchOption()};
+    const char     *options[] = {arch.c_str()};
+    nvJitLinkHandle handle{};
+    OTK_ERROR_CHECK(nvJitLinkCreate(&handle, sizeof(options) / sizeof(options[0]), options));
+    for (const std::string &ptx : g_ptx)
+    {
+        OTK_ERROR_CHECK(nvJitLinkAddData(handle, NVJITLINK_INPUT_PTX, ptx.c_str(), ptx.size(), ""));
+    }
+    OTK_ERROR_CHECK(nvJitLinkComplete(handle));
+    size_t cubinSize{};
+    OTK_ERROR_CHECK(nvJitLinkGetLinkedCubinSize(handle, &cubinSize));
+    std::vector<std::uint8_t> cubin;
+    cubin.resize(cubinSize);
+    OTK_ERROR_CHECK(nvJitLinkGetLinkedCubin(handle, cubin.data()));
+    size_t logSize{};
+    OTK_ERROR_CHECK(nvJitLinkGetErrorLogSize(handle, &logSize));
+    if(logSize > 1)
+    {
+        std::string log;
+        log.resize(logSize);
+        OTK_ERROR_CHECK(nvJitLinkGetErrorLog(handle, &log[0]));
+        std::cout << log << '\n';
+    }
+    OTK_ERROR_CHECK(nvJitLinkDestroy(&handle));
+
+    CUmodule module{};
+    OTK_ERROR_CHECK(cuModuleLoadData(&module, cubin.data()));
+    CUfunction entryPoint{};
+    OTK_ERROR_CHECK(cuModuleGetFunction(&entryPoint, module, "colorPixel"));
+    return entryPoint;
+}
+#else
+CUmodule g_module{};
+
+CUfunction getEntryPoint()
+{
+    OTK_ERROR_CHECK(cuModuleLoadData(&g_module, g_ptx[0].c_str()));
+    CUfunction entryPoint{};
+    OTK_ERROR_CHECK(cuModuleGetFunction(&entryPoint, g_module, "colorPixel"));
+    return entryPoint;
+}
+#endif
+
 void render(int width, int height, uchar4 *pixels, const char *const formula)
 {
     readHeaders(formula);
+#if USE_NVJITLINK
     createProgram("Iterate.cu");
     createProgram("Fractal.cu");
-    
-    OTK_ERROR_CHECK(cuInit(0));
-    CUdevice device{};
-    OTK_ERROR_CHECK(cuDeviceGet(&device, 0));
-    CUcontext context{};
-    OTK_ERROR_CHECK(cuCtxCreate(&context, 0, device));
-    CUmodule module{};
-    OTK_ERROR_CHECK(cuModuleLoadDataEx(&module, g_programs[0].c_str(), 0, nullptr, nullptr));
+#else
+    createSingleProgram();
+#endif
+    CUfunction entryPoint = getEntryPoint();
 
     const unsigned int totalThreads = width * height;
     const unsigned int threadsPerBlock = 64;
-    const unsigned int numBLocks = (totalThreads + threadsPerBlock - 1) / threadsPerBlock;
-
-    dim3 grid(numBLocks, 1, 1);
-    dim3 block(threadsPerBlock, 1, 1);
+    const unsigned int numBlocks = (totalThreads + threadsPerBlock - 1) / threadsPerBlock;
 
     Params              params{-2.0f, 1.f, -1.5f, 1.5f, 8192};
     static const uchar4 colors[6] = {
@@ -148,7 +209,13 @@ void render(int width, int height, uchar4 *pixels, const char *const formula)
         params.colors[i] = colors[i];
     }
 
-    // colorPixel<<<grid, block, 0U>>>(width, height, pixels, params);
+    CUdeviceptr devParams;
+    OTK_ERROR_CHECK(cuMemAlloc(&devParams, sizeof(Params)));
+    OTK_ERROR_CHECK(cuMemcpyHtoD(devParams, &params, sizeof(Params)));
+
+    // call function
+    void *args[] = {&width, &height, &pixels, &devParams};
+    OTK_ERROR_CHECK(cuLaunchKernel(entryPoint, numBlocks, 1, 1, threadsPerBlock, 1, 1, 0, nullptr, args, nullptr));
 }
 
 } // namespace fractal

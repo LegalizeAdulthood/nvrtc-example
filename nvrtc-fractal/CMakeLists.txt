@@ -29,6 +29,7 @@ add_executable(nvrtc-fractal-dynamic
     SourceDir.cpp.in
     ${CMAKE_CURRENT_BINARY_DIR}/SourceDir.cpp
     nvrtcErrorCheck.h
+    nvJitLinkErrorCheck.h
 )
 target_include_directories(nvrtc-fractal-dynamic PUBLIC .)
 target_link_libraries(nvrtc-fractal-dynamic PUBLIC OptiXToolkit::Error OptiXToolkit::Gui CUDA::nvrtc CUDA::nvJitLink)

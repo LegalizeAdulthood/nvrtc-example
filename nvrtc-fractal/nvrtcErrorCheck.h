@@ -8,7 +8,7 @@
 namespace otk {
 namespace error {
 
-/// Specializations for CUDA runtime error names.
+/// Specializations for runtime compilation error names.
 template <>
 inline std::string getErrorName(nvrtcResult value)
 {
@@ -42,7 +42,7 @@ inline std::string getErrorName(nvrtcResult value)
     return {};
 }
 
-/// Specializations for CUDA runtime error messages.
+/// Specializations for runtime compilation error messages.
 template <>
 inline std::string getErrorMessage( nvrtcResult value )
 {
