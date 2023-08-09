@@ -14,7 +14,7 @@ struct Params
     float ymin;
     float ymax;
     int maxIters;
-    uchar4 colors[256];
+    uchar4 colors[6];
 };
 
 struct Complex
@@ -79,11 +79,14 @@ extern "C" __global__ static void colorPixel(int width, int height, uchar4 *pixe
 
     float dr = (static_cast<float>(i) + 0.5f) / width;
     float re = params.xmin * (1.0f - dr) + params.xmax * dr;
-
     float di = (static_cast<float>(j) + 0.5f) / height;
     float im = params.ymin * (1.0f - di) + params.ymax * di;
-    const int iters = iterate(re, im, params.maxIters) % 256;
-    pixels[idx] = params.colors[iters];
+
+    const int iters = iterate(re, im, params.maxIters);
+    if (iters == params.maxIters)
+        pixels[idx] = make_uchar4(0, 0, 0, 255U);
+    else
+        pixels[idx] = params.colors[iters % 6];
 }
 
 __host__ void render(int width, int height, uchar4 *pixels)
@@ -96,10 +99,17 @@ __host__ void render(int width, int height, uchar4 *pixels)
     dim3 block(threadsPerBlock, 1, 1);
 
     Params params{-2.0f, 1.f, -1.5f, 1.5f, 8192};
-    for (int i = 0; i < 256; ++i)
+    static const uchar4 colors[6] = {
+        make_uchar4(255, 0, 0, 255),
+        make_uchar4(0, 255, 0, 255),
+        make_uchar4(0, 0, 255, 255),
+        make_uchar4(255, 0, 255, 255),
+        make_uchar4(0, 255, 255, 255),
+        make_uchar4(255, 0, 255, 255),
+    };
+    for (int i = 0; i < 6; ++i)
     {
-        params.colors[i] = make_uchar4(static_cast<unsigned char>(i), static_cast<unsigned char>(255 - i),
-                                       static_cast<unsigned char>(i), 255U);
+        params.colors[i] = colors[i];
     }
     colorPixel<<<grid, block, 0U>>>(width, height, pixels, params);
 }
