@@ -16,7 +16,7 @@ add_executable(nvrtc-fractal
     Iterate.cu
 )
 set_target_properties(nvrtc-fractal PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(nvrtc-fractal PUBLIC OptiXToolkit::Gui)
+target_link_libraries(nvrtc-fractal PUBLIC OptiXToolkit::Error OptiXToolkit::Gui)
 copy_dependencies(nvrtc-fractal)
 
 configure_file(SourceDir.cpp.in SourceDir.cpp)
